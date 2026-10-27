@@ -1,0 +1,31 @@
+[package]
+name = "objc-rs"
+version = "0.2.8"
+authors = ["Steven Sheldon", "Raphael Amorim"]
+
+description = "Objective-C Runtime bindings and wrapper for Rust. Maintained fork of objc crate"
+keywords = ["objective-c", "osx", "ios", "cocoa", "uikit"]
+readme = "README.md"
+repository = "http://github.com/raphamorim/objc-rs"
+documentation = "http://github.com/raphamorim/objc-rs"
+license = "MIT"
+
+exclude = [
+  ".gitignore",
+  ".travis.yml",
+  "doc.sh",
+  "travis_install.sh",
+  "travis_test.sh",
+  "tests-ios/**",
+ ]
+
+[features]
+exception = ["objc_exception"]
+verify_message = []
+
+[dependencies]
+malloc_buf = "0.0"
+
+[dependencies.objc_exception]
+version = "0.1"
+optional = true

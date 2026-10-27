@@ -1,0 +1,22 @@
+# hello.bfa — the smallest useful BFGame drawing program.
+# Compile with: python tools/bfasm.py examples/hello.bfa examples/hello.bf
+
+var run
+
+seti(run, 1)
+loop run {
+    clear(0)
+    draw_rect(64, 64, 832, 512, 1)
+    draw_rect_lines(64, 64, 832, 512, 4)
+    draw_text(104, 104, 7, 44, "BFGame")
+    draw_text(104, 174, 8, 18, "EVERY PIXEL ABOVE IS DRAWN BY BRAINFUCK")
+
+    draw_circle(240, 360, 82, 11)
+    draw_rect(390, 286, 130, 148, 5)
+    draw_rect_lines(390, 286, 130, 148, 7)
+    draw_line(580, 286, 830, 434, 9)
+    draw_circle(730, 360, 34, 3)
+
+    draw_text(104, 510, 8, 16, "SEE DOCS/GUIDE.MD FOR THE ABI")
+    yield()
+}

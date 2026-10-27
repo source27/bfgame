@@ -1,0 +1,490 @@
+# tetris.bfa 鈥?a compact Tetris for the BFGame engine.
+#
+# Board storage: ten engine heap arenas (0..9), one per column.  The row is
+# the byte index (0..19), so a cell is LOAD(column, row).  This avoids any
+# runtime indexing of the Brainfuck tape while keeping the game logic (and all
+# collision/line-clear decisions) in Brainfuck.
+#
+# Pieces use a 4x4 bounding box: origin_x/origin_y + four relative offsets.
+# Rotating clockwise transforms (x,y) -> (3-y,x).  The O piece is exempt.
+
+var type
+var origin_x
+var origin_y
+var color
+var gravity
+var score
+var lines
+var o0x
+var o0y
+var o1x
+var o1y
+var o2x
+var o2y
+var o3x
+var o3y
+var n0x
+var n0y
+var n1x
+var n1y
+var n2x
+var n2y
+var n3x
+var n3y
+var cx
+var cy
+var ax
+var ay
+var val
+var nz
+var blocked
+var flag
+var flag2
+var free
+var zero
+var rotate
+var is_o
+var x
+var y
+var cols
+var rows
+var row
+var filled
+var full
+var checking
+var at_end
+var scan
+var cols2
+var k
+var src
+var gx
+var gy
+var dropping
+var can
+var run
+var restart
+var dirty
+var alive
+var ok
+
+# --- collision -------------------------------------------------------------
+
+macro check_cell($cx, $cy, $ox, $oy) {
+    copy(ax, $cx)
+    add(ax, $ox)
+    copy(ay, $cy)
+    add(ay, $oy)
+
+    eq(flag, ax, 10)
+    if flag { seti(blocked, 1) }
+    eq(flag, ax, 11)
+    if flag { seti(blocked, 1) }
+    eq(flag, ax, 12)
+    if flag { seti(blocked, 1) }
+    eq(flag, ax, 13)
+    if flag { seti(blocked, 1) }
+    eq(flag, ax, 14)
+    if flag { seti(blocked, 1) }
+    eq(flag, ax, 15)
+    if flag { seti(blocked, 1) }
+
+    eq(flag, ay, 20)
+    if flag { seti(blocked, 1) }
+    eq(flag, ay, 21)
+    if flag { seti(blocked, 1) }
+    eq(flag, ay, 22)
+    if flag { seti(blocked, 1) }
+
+    load(ax, ay)
+    copy(val, VALUE)
+    neq(nz, val, 0)
+    if nz { seti(blocked, 1) }
+}
+
+macro check_piece($cx, $cy, $x0, $y0, $x1, $y1, $x2, $y2, $x3, $y3) {
+    seti(blocked, 0)
+    check_cell($cx, $cy, $x0, $y0)
+    check_cell($cx, $cy, $x1, $y1)
+    check_cell($cx, $cy, $x2, $y2)
+    check_cell($cx, $cy, $x3, $y3)
+}
+
+# --- piece spawning --------------------------------------------------------
+
+macro shape_case($t, $c, $x0, $y0, $x1, $y1, $x2, $y2, $x3, $y3) {
+    eq(flag, type, $t)
+    if flag {
+        seti(o0x, $x0)
+        seti(o0y, $y0)
+        seti(o1x, $x1)
+        seti(o1y, $y1)
+        seti(o2x, $x2)
+        seti(o2y, $y2)
+        seti(o3x, $x3)
+        seti(o3y, $y3)
+        seti(color, $c)
+    }
+}
+
+macro spawn_piece() {
+    copy(type, RAND_7)
+    seti(origin_x, 3)
+    seti(origin_y, 0)
+    seti(color, 11)
+    # Default is I; the matching case overwrites it with the same shape.
+    seti(o0x, 0)
+    seti(o0y, 1)
+    seti(o1x, 1)
+    seti(o1y, 1)
+    seti(o2x, 2)
+    seti(o2y, 1)
+    seti(o3x, 3)
+    seti(o3y, 1)
+
+    shape_case(0, 11, 0, 1, 1, 1, 2, 1, 3, 1)
+    shape_case(1, 9, 0, 0, 1, 0, 0, 1, 1, 1)
+    shape_case(2, 12, 0, 0, 1, 0, 2, 0, 1, 1)
+    shape_case(3, 5, 1, 0, 2, 0, 0, 1, 1, 1)
+    shape_case(4, 13, 0, 0, 1, 0, 1, 1, 2, 1)
+    shape_case(5, 10, 0, 0, 0, 1, 1, 1, 2, 1)
+    shape_case(6, 14, 2, 0, 0, 1, 1, 1, 2, 1)
+
+    check_piece(origin_x, origin_y, o0x, o0y, o1x, o1y, o2x, o2y, o3x, o3y)
+    copy(flag, blocked)
+    if flag { seti(alive, 0) }
+    seti(dirty, 1)
+}
+
+# --- movement / rotation ---------------------------------------------------
+
+macro commit_move($nx, $ny) {
+    copy(origin_x, $nx)
+    copy(origin_y, $ny)
+    seti(dirty, 1)
+}
+
+macro try_left() {
+    copy(cx, origin_x)
+    eq(zero, cx, 0)
+    copy(flag, zero)
+    if flag { seti(cx, 0) }
+    not(nz, zero)
+    if nz { dec(cx) }
+    copy(cy, origin_y)
+    check_piece(cx, cy, o0x, o0y, o1x, o1y, o2x, o2y, o3x, o3y)
+    copy(flag, zero)
+    if flag { seti(blocked, 1) }
+    not(free, blocked)
+    if free {
+        commit_move(cx, cy)
+    }
+}
+
+macro try_right() {
+    copy(cx, origin_x)
+    inc(cx)
+    copy(cy, origin_y)
+    check_piece(cx, cy, o0x, o0y, o1x, o1y, o2x, o2y, o3x, o3y)
+    not(free, blocked)
+    if free {
+        commit_move(cx, cy)
+    }
+}
+
+macro try_rotate() {
+    eq(is_o, type, 1)
+    not(rotate, is_o)
+    if rotate {
+        seti(n0x, 3)
+        sub(n0x, o0y)
+        copy(n0y, o0x)
+        seti(n1x, 3)
+        sub(n1x, o1y)
+        copy(n1y, o1x)
+        seti(n2x, 3)
+        sub(n2x, o2y)
+        copy(n2y, o2x)
+        seti(n3x, 3)
+        sub(n3x, o3y)
+        copy(n3y, o3x)
+
+        copy(cx, origin_x)
+        copy(cy, origin_y)
+        check_piece(cx, cy, n0x, n0y, n1x, n1y, n2x, n2y, n3x, n3y)
+        not(free, blocked)
+        if free {
+            copy(o0x, n0x)
+            copy(o0y, n0y)
+            copy(o1x, n1x)
+            copy(o1y, n1y)
+            copy(o2x, n2x)
+            copy(o2y, n2y)
+            copy(o3x, n3x)
+            copy(o3y, n3y)
+            seti(dirty, 1)
+        }
+    }
+}
+
+# --- locking, line clears, spawning ---------------------------------------
+
+macro store_piece() {
+    copy(ax, origin_x)
+    add(ax, o0x)
+    copy(ay, origin_y)
+    add(ay, o0y)
+    store(ax, ay, color)
+
+    copy(ax, origin_x)
+    add(ax, o1x)
+    copy(ay, origin_y)
+    add(ay, o1y)
+    store(ax, ay, color)
+
+    copy(ax, origin_x)
+    add(ax, o2x)
+    copy(ay, origin_y)
+    add(ay, o2y)
+    store(ax, ay, color)
+
+    copy(ax, origin_x)
+    add(ax, o3x)
+    copy(ay, origin_y)
+    add(ay, o3y)
+    store(ax, ay, color)
+}
+
+macro clear_lines() {
+    seti(row, 0)
+    seti(checking, 1)
+    loop checking {
+        eq(at_end, row, 20)
+        if at_end { seti(checking, 0) }
+        not(scan, at_end)
+        if scan {
+            seti(filled, 0)
+            seti(cols, 10)
+            seti(x, 0)
+            loop cols {
+                load(x, row)
+                copy(val, VALUE)
+                neq(nz, val, 0)
+                if nz { inc(filled) }
+                inc(x)
+                dec(cols)
+            }
+
+            eq(full, filled, 10)
+            copy(flag2, full)
+            if flag2 {
+                seti(cols2, 10)
+                seti(x, 0)
+                loop cols2 {
+                    copy(k, row)
+                    loop k {
+                        copy(src, k)
+                        dec(src)
+                        load(x, src)
+                        copy(val, VALUE)
+                        store(x, k, val)
+                        dec(k)
+                    }
+                    store(x, 0, 0)
+                    inc(x)
+                    dec(cols2)
+                }
+                addi(score, 10)
+                inc(lines)
+                seti(dirty, 1)
+            }
+            not(scan, full)
+            if scan { inc(row) }
+        }
+    }
+}
+
+macro lock_piece() {
+    store_piece()
+    clear_lines()
+    spawn_piece()
+    seti(dirty, 1)
+}
+
+macro try_down() {
+    copy(cx, origin_x)
+    copy(cy, origin_y)
+    inc(cy)
+    check_piece(cx, cy, o0x, o0y, o1x, o1y, o2x, o2y, o3x, o3y)
+    not(free, blocked)
+    if free {
+        copy(origin_y, cy)
+        seti(dirty, 1)
+    }
+    copy(flag, blocked)
+    if flag {
+        lock_piece()
+    }
+}
+
+macro hard_drop() {
+    seti(dropping, 1)
+    loop dropping {
+        copy(cx, origin_x)
+        copy(cy, origin_y)
+        inc(cy)
+        check_piece(cx, cy, o0x, o0y, o1x, o1y, o2x, o2y, o3x, o3y)
+        not(can, blocked)
+        if can {
+            inc(origin_y)
+            seti(dirty, 1)
+        }
+        copy(flag, blocked)
+        if flag { seti(dropping, 0) }
+    }
+    lock_piece()
+}
+
+# --- rendering -------------------------------------------------------------
+
+macro draw_cell_at($ox, $oy) {
+    copy(gx, origin_x)
+    add(gx, $ox)
+    addi(gx, 7)
+    copy(gy, origin_y)
+    add(gy, $oy)
+    cell(gx, gy, color, 0)
+}
+
+macro draw_frame() {
+    clear(0)
+    draw_rect(248, 80, 240, 480, 1)
+    draw_grid(248, 80, 10, 20, 24, 2)
+    draw_rect_lines(248, 80, 240, 480, 4)
+
+    draw_rect(560, 80, 360, 480, 1)
+    draw_rect_lines(560, 80, 360, 480, 4)
+    draw_text(584, 100, 7, 34, "TETRIS")
+    draw_text(584, 174, 8, 16, "SCORE")
+    draw_number(584, 198, score, 9, 42)
+    draw_text(584, 276, 8, 16, "LINES")
+    draw_number(584, 300, lines, 11, 32)
+    draw_line(584, 360, 896, 360, 2)
+    draw_text(584, 384, 8, 16, "ARROWS  MOVE")
+    draw_text(584, 412, 8, 16, "A / D   ROTATE")
+    draw_text(584, 440, 8, 16, "SPACE   DROP")
+    draw_text(584, 468, 8, 16, "R       RESTART")
+    draw_text(80, 602, 8, 16, "LOGIC: BRAINFUCK   RENDERER: MACROQUAD")
+
+    seti(x, 0)
+    seti(cols, 10)
+    loop cols {
+        seti(y, 0)
+        seti(rows, 20)
+        loop rows {
+            load(x, y)
+            copy(val, VALUE)
+            neq(nz, val, 0)
+            if nz {
+                copy(gx, x)
+                addi(gx, 7)
+                cell(gx, y, val, 0)
+            }
+            inc(y)
+            dec(rows)
+        }
+        inc(x)
+        dec(cols)
+    }
+
+    copy(flag, alive)
+    if flag {
+        draw_cell_at(o0x, o0y)
+        draw_cell_at(o1x, o1y)
+        draw_cell_at(o2x, o2y)
+        draw_cell_at(o3x, o3y)
+    }
+
+    copy(flag, alive)
+    not(ok, flag)
+    if ok {
+        draw_rect(268, 252, 200, 112, 0)
+        draw_rect_lines(268, 252, 200, 112, 4)
+        draw_text(298, 270, 7, 28, "GAME OVER")
+        draw_text(300, 318, 8, 16, "PRESS R")
+    }
+}
+
+# --- setup / main loop -----------------------------------------------------
+
+macro reset() {
+    fill(0, 0, 255, 0)
+    fill(1, 0, 255, 0)
+    fill(2, 0, 255, 0)
+    fill(3, 0, 255, 0)
+    fill(4, 0, 255, 0)
+    fill(5, 0, 255, 0)
+    fill(6, 0, 255, 0)
+    fill(7, 0, 255, 0)
+    fill(8, 0, 255, 0)
+    fill(9, 0, 255, 0)
+    seti(score, 0)
+    seti(lines, 0)
+    seti(gravity, 3)
+    seti(alive, 1)
+    spawn_piece()
+    seti(dirty, 1)
+}
+
+seti(run, 1)
+seti(restart, 1)
+
+loop run {
+    yield()
+
+    if R_PRESSED { seti(restart, 1) }
+
+    copy(flag, restart)
+    if flag {
+        reset()
+        seti(restart, 0)
+    }
+
+    copy(flag, alive)
+    if flag {
+        if LEFT_PRESSED {
+            try_left()
+        }
+        if RIGHT_PRESSED {
+            try_right()
+        }
+        if A_PRESSED {
+            try_rotate()
+        }
+        if D_PRESSED {
+            try_rotate()
+        }
+        if DOWN_PRESSED {
+            seti(gravity, 3)
+            try_down()
+        }
+        if SPACE_PRESSED {
+            hard_drop()
+        }
+
+        if TICK {
+            dec(gravity)
+            eq(flag, gravity, 0)
+            if flag {
+                seti(gravity, 3)
+                try_down()
+            }
+        }
+    }
+
+    copy(flag, dirty)
+    if flag {
+        draw_frame()
+        seti(dirty, 0)
+    }
+}
+

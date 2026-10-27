@@ -1,0 +1,282 @@
+# snake.bfa 鈥?Snake for the BFGame engine.
+#
+# This is Brainfuck macro assembly.  Every macro expands to plain Brainfuck
+# memory operations and engine MMIO writes; tools/bfasm.py emits snake.bf,
+# which is the file the VM actually executes.
+#
+# Board: 16x16 cells, playable interior 1..14 (the border is 0 and 15).
+# The snake body is a ring of positions in heap arenas 0 (x) and 1 (y).
+# Cells 0..255 of the tape are the engine ABI; game variables start at 256.
+
+var dir
+var len
+var score
+var write_idx
+var head_x
+var head_y
+var nx
+var ny
+var food_x
+var food_y
+var i
+var count
+var idx
+var alive
+var run
+var restart
+var dirty
+var hit
+var eqx
+var eqy
+var ate
+var flag
+var flag2
+var ok
+var free
+var searching
+var tries
+var ax
+var ay
+
+# --- helpers ---------------------------------------------------------------
+
+macro load_x($index) {
+    load(0, $index)
+    copy(ax, VALUE)
+}
+
+macro load_y($index) {
+    load(1, $index)
+    copy(ay, VALUE)
+}
+
+# Set $out=1 if (x,y) occurs in the current snake body.
+macro scan_body($x, $y, $out) {
+    copy(count, len)
+    copy(idx, write_idx)
+    sub(idx, len)
+    seti($out, 0)
+    loop count {
+        load(0, idx)
+        copy(ax, VALUE)
+        load(1, idx)
+        copy(ay, VALUE)
+        eq(eqx, ax, $x)
+        eq(eqy, ay, $y)
+        and(flag, eqx, eqy)
+        if flag {
+            seti($out, 1)
+        }
+        inc(idx)
+        dec(count)
+    }
+}
+
+# Pick a free food square.  The starting square comes from random nibbles;
+# on collision we scan right and wrap, which is enough for a 14x14 board.
+macro spawn_food() {
+    copy(food_x, RAND_LO)
+    copy(food_y, RAND_HI)
+    eq(flag, food_x, 0)
+    if flag { seti(food_x, 1) }
+    eq(flag, food_x, 15)
+    if flag { seti(food_x, 14) }
+    eq(flag, food_y, 0)
+    if flag { seti(food_y, 1) }
+    eq(flag, food_y, 15)
+    if flag { seti(food_y, 14) }
+
+    seti(searching, 1)
+    seti(tries, 0)
+    loop searching {
+        inc(tries)
+        eq(flag, tries, 0)
+        if flag {
+            seti(searching, 0)
+            seti(alive, 0)
+        }
+        scan_body(food_x, food_y, hit)
+        copy(flag, hit)
+        if flag {
+            inc(food_x)
+            eq(flag2, food_x, 15)
+            if flag2 {
+                seti(food_x, 1)
+                inc(food_y)
+                eq(flag2, food_y, 15)
+                if flag2 { seti(food_y, 1) }
+            }
+        }
+        not(free, hit)
+        if free { seti(searching, 0) }
+    }
+}
+
+macro store_body($index, $x, $y) {
+    store(0, $index, $x)
+    store(1, $index, $y)
+}
+
+macro reset() {
+    fill(0, 0, 255, 0)
+    fill(1, 0, 255, 0)
+    store(0, 255, 0)
+    store(1, 255, 0)
+    seti(dir, 2)
+    seti(len, 3)
+    seti(score, 0)
+    seti(write_idx, 3)
+    seti(head_x, 8)
+    seti(head_y, 8)
+    seti(alive, 1)
+    store_body(0, 6, 8)
+    store_body(1, 7, 8)
+    store_body(2, 8, 8)
+    spawn_food()
+    seti(dirty, 1)
+}
+
+# Read the host's latched arrow direction.  The opposite direction is
+# rejected, so the snake cannot reverse into itself.
+macro try_dir($value, $opposite) {
+    eq(flag, LAST_DIR, $value)
+    if flag {
+        eq(flag2, dir, $opposite)
+        not(flag2, flag2)
+        if flag2 { seti(dir, $value) }
+    }
+}
+
+macro update_dir() {
+    try_dir(1, 3)
+    try_dir(2, 4)
+    try_dir(3, 1)
+    try_dir(4, 2)
+}
+
+macro tick() {
+    copy(nx, head_x)
+    copy(ny, head_y)
+    eq(flag, dir, 1)
+    if flag { dec(ny) }
+    eq(flag, dir, 2)
+    if flag { inc(nx) }
+    eq(flag, dir, 3)
+    if flag { inc(ny) }
+    eq(flag, dir, 4)
+    if flag { dec(nx) }
+
+    scan_body(nx, ny, hit)
+    eq(flag, nx, 0)
+    if flag { seti(hit, 1) }
+    eq(flag, nx, 15)
+    if flag { seti(hit, 1) }
+    eq(flag, ny, 0)
+    if flag { seti(hit, 1) }
+    eq(flag, ny, 15)
+    if flag { seti(hit, 1) }
+
+    copy(flag, hit)
+    if flag {
+        seti(alive, 0)
+        seti(dirty, 1)
+    }
+
+    not(ok, hit)
+    if ok {
+        eq(eqx, nx, food_x)
+        eq(eqy, ny, food_y)
+        and(ate, eqx, eqy)
+
+        copy(flag, ate)
+        if flag {
+            inc(score)
+            inc(len)
+        }
+
+        store_body(write_idx, nx, ny)
+        inc(write_idx)
+        copy(head_x, nx)
+        copy(head_y, ny)
+
+        copy(flag, ate)
+        if flag {
+            spawn_food()
+        }
+        seti(dirty, 1)
+    }
+}
+
+macro draw_frame() {
+    clear(0)
+    draw_rect(80, 80, 384, 384, 1)
+    draw_grid(80, 80, 16, 16, 24, 2)
+    draw_rect_lines(80, 80, 384, 384, 4)
+
+    draw_rect(520, 80, 360, 384, 1)
+    draw_rect_lines(520, 80, 360, 384, 4)
+    draw_text(544, 100, 7, 34, "SNAKE")
+    draw_text(544, 174, 8, 16, "SCORE")
+    draw_number(544, 198, score, 6, 48)
+    draw_line(544, 262, 896, 262, 2)
+    draw_text(544, 286, 8, 16, "ARROWS  MOVE")
+    draw_text(544, 316, 8, 16, "R       RESET")
+    draw_text(80, 502, 8, 16, "LOGIC: BRAINFUCK   RENDERER: MACROQUAD")
+
+    copy(count, len)
+    seti(i, 0)
+    copy(idx, write_idx)
+    sub(idx, len)
+    loop count {
+        load(0, idx)
+        copy(ax, VALUE)
+        load(1, idx)
+        copy(ay, VALUE)
+        cell(ax, ay, 5, 0)
+        inc(idx)
+        dec(count)
+    }
+
+    cell(food_x, food_y, 3, 1)
+    cell(head_x, head_y, 6, 2)
+
+    copy(flag, alive)
+    not(ok, flag)
+    if ok {
+        draw_rect(110, 218, 324, 108, 0)
+        draw_rect_lines(110, 218, 324, 108, 4)
+        draw_text(142, 236, 7, 30, "GAME OVER")
+        draw_text(150, 286, 8, 16, "PRESS R TO RETRY")
+    }
+}
+
+# --- frame loop ------------------------------------------------------------
+
+seti(run, 1)
+seti(restart, 1)
+
+loop run {
+    yield()
+
+    if R_PRESSED { seti(restart, 1) }
+
+    copy(flag, restart)
+    if flag {
+        reset()
+        seti(restart, 0)
+    }
+
+    copy(flag, alive)
+    if flag {
+        update_dir()
+        if TICK {
+            tick()
+        }
+    }
+
+    copy(flag, dirty)
+    if flag {
+        draw_frame()
+        seti(dirty, 0)
+    }
+}
