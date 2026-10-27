@@ -1,5 +1,7 @@
 # BFGame
 
+> GitHub: <https://github.com/source27/bfgame>
+
 一个用 Rust 写的迷你游戏引擎：**渲染和输入由 macroquad 提供，游戏逻辑完全跑在 Brainfuck 虚拟机里**。
 
 它不是“Rust 写游戏、顺手塞一段 BF 当彩蛋”。蛇的移动、碰撞、吃食物、俄罗斯方块的旋转、消行、计分，全部由 `games/*.bf` 中的纯 Brainfuck 代码控制。Rust 只负责：
